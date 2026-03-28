@@ -52,25 +52,27 @@ function randId(gens) {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-async function fetchFrName(id) {
+async function fetchNames(id) {
   try {
     const r = await fetch(`https://pokeapi.co/api/v2/pokemon-species/${id}`);
     const d = await r.json();
     const fr = d.names.find(n => n.language.name === 'fr');
-    return fr ? fr.name : null;
-  } catch { return null; }
+    const en = d.names.find(n => n.language.name === 'en');
+    return { fr: fr ? fr.name : null, en: en ? en.name : null };
+  } catch { return { fr: null, en: null }; }
 }
 
 async function fetchPokemon(id) {
-  const [r1, frName] = await Promise.all([
+  const [r1, names] = await Promise.all([
     fetch(`https://pokeapi.co/api/v2/pokemon/${id}`).then(r => r.json()),
-    fetchFrName(id)
+    fetchNames(id)
   ]);
   const stats = {};
   r1.stats.forEach(s => stats[s.stat.name] = s.base_stat);
   return {
     id: r1.id,
-    name: frName || r1.name,
+    name: names.fr || r1.name,
+    nameEN: names.en || r1.name,
     sprite: r1.sprites.front_default,
     types: r1.types.map(t => t.type.name),
     stats
