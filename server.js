@@ -23,6 +23,10 @@ const GEN_RANGES = {
   '5': [494, 649], '6': [650, 721], '7': [722, 809], '8': [810, 905], '9': [906, 1025]
 };
 
+function broadcastPlayerCount() {
+  io.emit('player_count', { count: io.engine.clientsCount });
+}
+
 function shuffle(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -225,6 +229,12 @@ function endGame(roomCode) {
 // ── SOCKET.IO EVENTS ─────────────────────────────────────────────
 io.on('connection', (socket) => {
   console.log(`[+] Connecté: ${socket.id}`);
+  broadcastPlayerCount();
+
+  socket.on('get_player_count', () => {
+  socket.emit('player_count', { count: io.engine.clientsCount });
+});
+
   socket.on('join_queue', ({ pseudo, gens }) => {
   // Retire le joueur de la queue s'il y était déjà
   const existing = queue.findIndex(p => p.id === socket.id);
@@ -439,7 +449,7 @@ socket.on('leave_queue', () => {
 
   socket.on('disconnect', () => {
   console.log(`[-] Déconnecté: ${socket.id}, roomCode: ${socket.roomCode}`);
-
+  broadcastPlayerCount();
   // Retire de la queue en premier, avant tout
   const qIdx = queue.findIndex(p => p.id === socket.id);
   if (qIdx !== -1) {
