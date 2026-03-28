@@ -16,6 +16,7 @@ const io = new Server(server, {
 const PORT = process.env.PORT || 3000;
 
 const rooms = {};
+const queue = [];
 const STATS = ['hp', 'attack', 'special-attack', 'defense', 'special-defense', 'speed'];
 const GEN_RANGES = {
   '1': [1, 151], '2': [152, 251], '3': [252, 386], '4': [387, 493],
@@ -224,6 +225,89 @@ function endGame(roomCode) {
 // ── SOCKET.IO EVENTS ─────────────────────────────────────────────
 io.on('connection', (socket) => {
   console.log(`[+] Connecté: ${socket.id}`);
+  socket.on('join_queue', ({ pseudo, gens }) => {
+  // Retire le joueur de la queue s'il y était déjà
+  const existing = queue.findIndex(p => p.id === socket.id);
+  if (existing !== -1) queue.splice(existing, 1);
+
+  socket.pseudo = pseudo;
+  socket.gens = gens;
+
+  // Cherche un adversaire dans la queue
+  const opponent = queue.find(p => p.id !== socket.id);
+
+  if (opponent) {
+    queue.splice(queue.indexOf(opponent), 1);
+    clearTimeout(opponent.timeout);
+
+    // Crée la room
+    let code = generateRoomCode();
+    while (rooms[code]) code = generateRoomCode();
+
+    const gens_merged = ['all']; // toutes gens ou filter commun possible plus tard
+
+    rooms[code] = {
+      code,
+      gens: gens || ['all'],
+      players: { [opponent.id]: opponent.pseudo, [socket.id]: pseudo },
+      pokemons: [],
+      round: 0,
+      gameId: 1,
+      roundId: 0,
+      scores: { [opponent.id]: 0, [socket.id]: 0 },
+      usedStats: { [opponent.id]: [], [socket.id]: [] },
+      roundChoices: {},
+      roundTimer: null,
+      nextRoundTimer: null,
+      roundResolved: false,
+      resolving: false,
+      history: [],
+      status: 'loading',
+      statPool: shuffle([...STATS])
+    };
+
+    opponent.socket.roomCode = code;
+    socket.roomCode = code;
+    opponent.socket.join(code);
+    socket.join(code);
+
+    console.log(`[Matchmaking] ${opponent.pseudo} vs ${pseudo} → room ${code}`);
+
+    io.to(code).emit('room_joined', { code, players: rooms[code].players });
+
+    const currentGameId = 1;
+    loadSixPokemons(rooms[code].gens).then(pokemons => {
+      if (!rooms[code] || rooms[code].gameId !== currentGameId) return;
+      rooms[code].pokemons = pokemons;
+      rooms[code].status = 'playing';
+      io.to(code).emit('game_start', { players: rooms[code].players });
+      setTimeout(() => startRound(code, currentGameId), 1000);
+    });
+
+  } else {
+    // Pas d'adversaire — met en attente avec timeout 60s
+    const timeout = setTimeout(() => {
+      const idx = queue.findIndex(p => p.id === socket.id);
+      if (idx !== -1) {
+        queue.splice(idx, 1);
+        socket.emit('queue_timeout');
+      }
+    }, 60000);
+
+    queue.push({ id: socket.id, socket, pseudo, gens: gens || ['all'], timeout });
+    socket.emit('queue_waiting');
+    console.log(`[Queue] ${pseudo} en attente (${queue.length} dans la file)`);
+  }
+});
+
+socket.on('leave_queue', () => {
+  const idx = queue.findIndex(p => p.id === socket.id);
+  if (idx !== -1) {
+    clearTimeout(queue[idx].timeout);
+    queue.splice(idx, 1);
+    console.log(`[Queue] ${socket.pseudo} a quitté la file`);
+  }
+});
 
   socket.on('create_room', ({ pseudo, gens }) => {
     let code = generateRoomCode();
@@ -354,25 +438,33 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    console.log(`[-] Déconnecté: ${socket.id}, roomCode: ${socket.roomCode}`);
-    const code = socket.roomCode;
-    if (!code || !rooms[code]) return;
+  console.log(`[-] Déconnecté: ${socket.id}, roomCode: ${socket.roomCode}`);
 
-    const room = rooms[code];
-    console.log(`Room ${code} players restants: ${Object.keys(room.players).length - 1}`);
-    const pseudo = room.players[socket.id];
-    delete room.players[socket.id];
+  // Retire de la queue en premier, avant tout
+  const qIdx = queue.findIndex(p => p.id === socket.id);
+  if (qIdx !== -1) {
+    clearTimeout(queue[qIdx].timeout);
+    queue.splice(qIdx, 1);
+  }
 
-    if (room.status === 'playing') {
-      clearTimeout(room.roundTimer);
-      clearTimeout(room.nextRoundTimer);
-      io.to(code).emit('opponent_disconnected', { pseudo });
-    }
+  const code = socket.roomCode;
+  if (!code || !rooms[code]) return;
 
-    if (Object.keys(room.players).length === 0) {
-      delete rooms[code];
-    }
-  });
+  const room = rooms[code];
+  console.log(`Room ${code} players restants: ${Object.keys(room.players).length - 1}`);
+  const pseudo = room.players[socket.id];
+  delete room.players[socket.id];
+
+  if (room.status === 'playing') {
+    clearTimeout(room.roundTimer);
+    clearTimeout(room.nextRoundTimer);
+    io.to(code).emit('opponent_disconnected', { pseudo });
+  }
+
+  if (Object.keys(room.players).length === 0) {
+    delete rooms[code];
+  }
+});
 });
 
 app.get('/', (req, res) => res.send('PokéStat Duel Server OK'));
