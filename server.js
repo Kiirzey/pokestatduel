@@ -1,3 +1,4 @@
+//Serveur Node.js pour PokéStat Duel
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
