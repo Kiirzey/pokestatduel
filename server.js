@@ -209,22 +209,29 @@ function endGame(roomCode) {
   if (!room) return;
 
   const gameIdAtEnd = room.gameId;
-
   const players = Object.keys(room.players);
   let winnerId = null;
-  if (room.scores[players[0]] > room.scores[players[1]]) winnerId = players[0];
-  else if (room.scores[players[1]] > room.scores[players[0]]) winnerId = players[1];
+
+  if (room.reversed) {
+    // Mode inversé — le plus petit score gagne
+    if (room.scores[players[0]] < room.scores[players[1]]) winnerId = players[0];
+    else if (room.scores[players[1]] < room.scores[players[0]]) winnerId = players[1];
+  } else {
+    if (room.scores[players[0]] > room.scores[players[1]]) winnerId = players[0];
+    else if (room.scores[players[1]] > room.scores[players[0]]) winnerId = players[1];
+  }
 
   io.to(roomCode).emit('game_end', {
     scores: room.scores,
     players: room.players,
     winnerId,
+    reversed: room.reversed || false,
     history: room.history || []
   });
 
   setTimeout(() => {
     if (!rooms[roomCode]) return;
-    if (rooms[roomCode].gameId !== gameIdAtEnd) return; // ← ne supprime pas si rematch
+    if (rooms[roomCode].gameId !== gameIdAtEnd) return;
     delete rooms[roomCode];
   }, 60000);
 }
@@ -238,13 +245,13 @@ io.on('connection', (socket) => {
   socket.emit('player_count', { count: io.engine.clientsCount });
 });
 
-  socket.on('join_queue', ({ pseudo, gens }) => {
-  // Retire le joueur de la queue s'il y était déjà
+  socket.on('join_queue', ({ pseudo, gens, reversed }) => {
   const existing = queue.findIndex(p => p.id === socket.id);
   if (existing !== -1) queue.splice(existing, 1);
 
   socket.pseudo = pseudo;
   socket.gens = gens;
+  socket.reversed = reversed || false;
 
   // Cherche un adversaire dans la queue
   const opponent = queue.find(p => p.id !== socket.id);
@@ -262,6 +269,7 @@ io.on('connection', (socket) => {
     rooms[code] = {
       code,
       gens: gens || ['all'],
+      reversed: reversed || false,
       players: { [opponent.id]: opponent.pseudo, [socket.id]: pseudo },
       pokemons: [],
       round: 0,
@@ -307,7 +315,7 @@ io.on('connection', (socket) => {
       }
     }, 60000);
 
-    queue.push({ id: socket.id, socket, pseudo, gens: gens || ['all'], timeout });
+    queue.push({ id: socket.id, socket, pseudo, gens: gens || ['all'], reversed: reversed || false, timeout });
     socket.emit('queue_waiting');
     console.log(`[Queue] ${pseudo} en attente (${queue.length} dans la file)`);
   }
@@ -322,13 +330,14 @@ socket.on('leave_queue', () => {
   }
 });
 
-  socket.on('create_room', ({ pseudo, gens }) => {
+  socket.on('create_room', ({ pseudo, gens, reversed }) => {
     let code = generateRoomCode();
     while (rooms[code]) code = generateRoomCode();
 
     rooms[code] = {
       code,
       gens: gens || ['all'],
+      reversed: reversed || false,
       players: { [socket.id]: pseudo },
       pokemons: [],
       round: 0,
@@ -432,6 +441,7 @@ socket.on('leave_queue', () => {
       room.resolving = false;
       room.gameId = (room.gameId || 0) + 1;
       room.statPool = shuffle([...STATS]);
+      // reversed reste inchangé pour le rematch
       const currentGameId = room.gameId;
 
       room.status = 'loading';
