@@ -25,7 +25,10 @@ const GEN_RANGES = {
 };
 
 function broadcastPlayerCount() {
-  io.emit('player_count', { count: io.engine.clientsCount });
+  const pseudos = [...io.sockets.sockets.values()]
+    .map(s => s.pseudo)
+    .filter(p => p && p.trim() !== '');
+  io.emit('player_count', { count: io.engine.clientsCount, pseudos });
 }
 
 function shuffle(arr) {
@@ -242,8 +245,11 @@ io.on('connection', (socket) => {
   broadcastPlayerCount();
 
   socket.on('get_player_count', () => {
-  socket.emit('player_count', { count: io.engine.clientsCount });
-});
+    const pseudos = [...io.sockets.sockets.values()]
+      .map(s => s.pseudo)
+      .filter(p => p && p.trim() !== '');
+    socket.emit('player_count', { count: io.engine.clientsCount, pseudos });
+  });
 
   socket.on('join_queue', ({ pseudo, gens, reversed }) => {
   const existing = queue.findIndex(p => p.id === socket.id);
