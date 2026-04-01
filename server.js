@@ -28,7 +28,18 @@ function broadcastPlayerCount() {
   const pseudos = [...io.sockets.sockets.values()]
     .map(s => s.pseudo)
     .filter(p => p && p.trim() !== '');
-  io.emit('player_count', { count: io.engine.clientsCount, pseudos });
+  // Infos de la queue pour les points verts
+  const queueInfo = {
+    gens: {},      // { '1': 2, 'all': 1, ... } nb joueurs en attente par gen
+    reversed: queue.filter(p => p.reversed).length > 0
+  };
+  queue.forEach(p => {
+    const g = p.gens || ['all'];
+    g.forEach(gen => {
+      queueInfo.gens[gen] = (queueInfo.gens[gen] || 0) + 1;
+    });
+  });
+  io.emit('player_count', { count: io.engine.clientsCount, pseudos, queueInfo });
 }
 
 function shuffle(arr) {
@@ -248,7 +259,14 @@ io.on('connection', (socket) => {
     const pseudos = [...io.sockets.sockets.values()]
       .map(s => s.pseudo)
       .filter(p => p && p.trim() !== '');
-    socket.emit('player_count', { count: io.engine.clientsCount, pseudos });
+    const queueInfo = { gens: {}, reversed: queue.filter(p => p.reversed).length > 0 };
+    queue.forEach(p => { (p.gens||['all']).forEach(g => { queueInfo.gens[g] = (queueInfo.gens[g]||0)+1; }); });
+    socket.emit('player_count', { count: io.engine.clientsCount, pseudos, queueInfo });
+  });
+
+  socket.on('set_pseudo', ({ pseudo }) => {
+    socket.pseudo = pseudo;
+    broadcastPlayerCount();
   });
 
   socket.on('join_queue', ({ pseudo, gens, reversed }) => {
@@ -323,6 +341,7 @@ io.on('connection', (socket) => {
 
     queue.push({ id: socket.id, socket, pseudo, gens: gens || ['all'], reversed: reversed || false, timeout });
     socket.emit('queue_waiting');
+    broadcastPlayerCount(); // met à jour les points verts
     console.log(`[Queue] ${pseudo} en attente (${queue.length} dans la file)`);
   }
 });
@@ -332,6 +351,7 @@ socket.on('leave_queue', () => {
   if (idx !== -1) {
     clearTimeout(queue[idx].timeout);
     queue.splice(idx, 1);
+    broadcastPlayerCount(); // met à jour les points verts
     console.log(`[Queue] ${socket.pseudo} a quitté la file`);
   }
 });
